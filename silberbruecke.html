@@ -3324,6 +3324,14 @@ STORY.chapters.push({
  *  werden muss.
  */
 var CH=null, ECHOES=[], DOCS=[], THOUGHTS=[], WATCH=[], chapterIdx=-1, thoughtDone=[], scriptIdx=0;
+/* Steht hier oben und nicht bei den übrigen Spielerdaten, weil loadChapter
+   sie anfasst — und loadChapter(0) läuft weiter unten auf oberster Ebene,
+   also bevor eine spätere Zuweisung ausgeführt wäre. `var` wird zwar
+   hochgezogen, der Wert aber nicht: Die Zuweisung lief dann gegen undefined
+   und riss das ganze Skript mit. */
+var MOTH={ active:false, x:0,y:0,z:0, life:0, stare:0, alpha:0, seed:0, mode:1,
+           schockAn:false, schockAt:null };
+
 function loadChapter(i){
   chapterIdx = i;
   CH       = STORY.chapters[i];
@@ -3332,6 +3340,10 @@ function loadChapter(i){
   THOUGHTS = CH.thoughts || [];
   WATCH    = CH.watch || [];
   thoughtDone = [];
+  // Der gemerkte Ort des letzten Schrecks gilt nur innerhalb einer Nacht.
+  // Sonst bliebe eine Stelle stumm, bloß weil sie zufällig zwei Meter neben
+  // der von vorgestern liegt.
+  MOTH.schockAt = null;
   SB.CH=CH; SB.ECHOES=ECHOES; SB.DOCS=DOCS; SB.STORY=STORY; SB.chapterIdx=i;
 }
 // Die Akte hat vierzig Seiten: zweiunddreißig Aussagen und acht Beilagen.
@@ -4485,6 +4497,91 @@ function sfxChime(pan){
    Tonhöhe: 41 Hz, das tiefe E, die einundvierzig Schwingungen in der Sekunde,
    die Hattie seit dem Fünfzehnten unter jedem Stück mitklingen hört. Darüber
    der metallische Riss, darunter die Oktave, damit es im Brustbein sitzt. */
+/* --- Der Schreck ---------------------------------------------------------
+ *  Die schreiende Geige, wenn sie zum ersten Mal an einer Stelle steht.
+ *
+ *  Was so einen Ton ausmacht, ist nicht die Höhe, sondern die Reibung: ein
+ *  Cluster aus kleiner Sekunde und Tritonus, jeder Ton zweifach leicht
+ *  verstimmt. Zwei gleiche Sägezähne klängen nach Synthesizer; erst die
+ *  Schwebung zwischen zwei fast gleichen macht daraus einen Bogen, der zu
+ *  hart aufgesetzt wird.
+ *
+ *  Dazu drei Dinge, die man einzeln kaum hört und zusammen sofort:
+ *  ein Kratzen von 40 ms am Anfang (Kolophonium, bevor der Ton steht),
+ *  ein Tremolo von 14 Hz (der gehetzte Bogen), und ein Sub darunter, der
+ *  erst nach dem Schrei kommt — der Schlag in die Magengrube, den moderne
+ *  Filme unter den Stich legen.
+ *
+ *  Die Frequenzen fallen zum Schluss leicht ab. Ein Ton, der auf seiner
+ *  Höhe endet, klingt entschlossen; einer, der abrutscht, klingt verletzt.
+ */
+function sfxSchreck(){
+  if(!A.on) return;
+  var t=A.ctx.currentTime;
+  /* Alles läuft durch einen Begrenzer. Sechs Sägezähne, ein Formant mit +9 dB,
+     dazu Kratzen und Sub — die Summe überschreitet 1 mühelos, und die Web-Audio-
+     Ausgabe kappt dann hart. Digitales Zerren klingt nach Fehler, nicht nach
+     Geige. Mit dem Begrenzer darf der Stich so laut sein, wie er sein soll. */
+  var out=A.ctx.createGain(); out.gain.value=1;
+  var lim=A.ctx.createDynamicsCompressor();
+  lim.threshold.value=-7; lim.knee.value=0; lim.ratio.value=20;
+  lim.attack.value=0.002; lim.release.value=0.16;
+  out.connect(lim); lim.connect(A.master); lim.connect(A.rev);
+
+  // Formant: hebt genau das Band an, in dem eine Geige sticht.
+  var pk=A.ctx.createBiquadFilter(); pk.type='peaking';
+  pk.frequency.value=3100; pk.Q.value=1.1; pk.gain.value=9;
+  var hp=A.ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=900;
+  pk.connect(hp); hp.connect(out);
+
+  // Tremolo: ein Verstärkungsknoten, den ein Oszillator anfasst.
+  var trem=A.ctx.createGain(); trem.gain.value=0.72; trem.connect(pk);
+  var lfo=A.ctx.createOscillator(); lfo.type='sine'; lfo.frequency.value=14.5;
+  var lfoG=A.ctx.createGain(); lfoG.gain.value=0.28;
+  lfo.connect(lfoG); lfoG.connect(trem.gain);
+  lfo.start(t); lfo.stop(t+1.6);
+
+  // Der Cluster. e7 und f7 reiben als kleine Sekunde, b6 steht als
+  // Tritonus darunter und nimmt dem Ganzen jede Auflösung.
+  [[2637,1.000],[2794,0.900],[1865,0.620]].forEach(function(v){
+    [-7,7].forEach(function(det){
+      var o=A.ctx.createOscillator(); o.type='sawtooth';
+      o.frequency.setValueAtTime(v[0]+det,t);
+      o.frequency.setValueAtTime(v[0]+det,t+0.55);
+      o.frequency.exponentialRampToValueAtTime((v[0]+det)*0.90,t+1.15);
+      o.detune.value=det*1.6;
+      var g=A.ctx.createGain();
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(0.115*v[1],t+0.008);   // harter Strich
+      g.gain.exponentialRampToValueAtTime(0.062*v[1],t+0.30);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+1.20);
+      o.connect(g); g.connect(trem);
+      o.start(t); o.stop(t+1.3);
+    });
+  });
+
+  // Der Bogen setzt auf: 40 ms Kratzen, bevor der Ton steht.
+  var s=noiseSrc(), bf=A.ctx.createBiquadFilter();
+  bf.type='bandpass'; bf.frequency.value=4200; bf.Q.value=0.8;
+  var bg=A.ctx.createGain();
+  bg.gain.setValueAtTime(0.0001,t);
+  bg.gain.exponentialRampToValueAtTime(0.26,t+0.004);
+  bg.gain.exponentialRampToValueAtTime(0.0001,t+0.14);
+  s.connect(bf); bf.connect(bg); bg.connect(out);
+  s.start(t); s.stop(t+0.25);
+
+  // Der Sub kommt eine Zehntelsekunde später — erst der Schrei, dann der Schlag.
+  var sub=A.ctx.createOscillator(); sub.type='sine';
+  sub.frequency.setValueAtTime(78,t+0.10);
+  sub.frequency.exponentialRampToValueAtTime(34,t+1.05);
+  var sg=A.ctx.createGain();
+  sg.gain.setValueAtTime(0.0001,t+0.10);
+  sg.gain.exponentialRampToValueAtTime(0.34,t+0.16);
+  sg.gain.exponentialRampToValueAtTime(0.0001,t+1.5);
+  sub.connect(sg); sg.connect(lim);       // auch der Sub durch den Begrenzer
+  sub.start(t+0.10); sub.stop(t+1.6);
+}
+
 function sfxKette(){
   if(!A.on) return;
   var t=A.ctx.currentTime, out=A.ctx.createGain(); out.gain.value=1;
@@ -4558,7 +4655,8 @@ function sfxHeart(){
 
 /* ------------------------------------------------------------ Zustand */
 var P={ x:roadX(133), z:133, y:0, vx:0, vz:0, yaw:0, pitch:-0.03,
-        bob:0, stepAcc:0, torch:0, torchTarget:1, walked:0, sway:0, spd01:0 };
+        bob:0, stepAcc:0, torch:0, torchTarget:1, walked:0, sway:0, spd01:0,
+        zuck:0 };
 P.y = terrainH(P.x,P.z)+1.70;
 var G={ state:'load', t:0, found:0, dread:0, dreadTarget:0, nextThought:55,
         listenCd:0, blockMsg:0, finaleT:0, frame:0,
@@ -4570,7 +4668,6 @@ var G={ state:'load', t:0, found:0, dread:0, dreadTarget:0, nextThought:55,
         docs:0, seiten:0,                        // Beilagen dieser Nacht · Seiten insgesamt
         weiss:0, weissV:0,                       // das Weiß am Ende
         focus:null };                            // der Fund in Reichweite, oder nichts
-var MOTH={ active:false, x:0,y:0,z:0, life:0, stare:0, alpha:0, seed:0, mode:1 };
 SB.P=P; SB.G=G; SB.MOTH=MOTH;      // Diagnose von außen
 
 // Ereignisse laufen in Spielzeit ab, damit die Pause sie nicht überholt.
@@ -4703,6 +4800,7 @@ function sichtung(){
   MOTH.active=true; MOTH.mode=3;
   MOTH.x=BX+MOTH_X_OFF; MOTH.z=RIVER_Z+MOTH_DZ; MOTH.y=MOTH_Y;
   MOTH.alpha=0; MOTH.stare=0; MOTH.life=1e9; MOTH.seed=1.7;
+  armSchreck();
   G.dreadTarget=Math.max(G.dreadTarget,0.55);
   beat(1.2, function(){ sfxWings();
     think("Drüben auf der Kette, da wo sie wieder hochgeht, sitzt sie."); });
@@ -4725,6 +4823,7 @@ function finaleBruecke(){
   MOTH.active=true; MOTH.mode=3;
   MOTH.x=BX+MOTH_X_OFF; MOTH.z=RIVER_Z+MOTH_DZ; MOTH.y=MOTH_Y;
   MOTH.alpha=Math.max(MOTH.alpha,0.4); MOTH.life=1e9;
+  armSchreck();     // dieselbe Stelle wie in sichtung() — bleibt also stumm
 
   beat(1.0,  function(){ think("Ich zähle die Scheinwerferpaare. Gegen jede Ausbildung, die ich habe."); });
   beat(6.0,  function(){ think("… achtunddreißig."); sfxHeart(); });
@@ -5928,6 +6027,67 @@ function presenceStage(){
   if(G.found<7) return 2;
   return 3;
 }
+/* --- Wann der Schreck zündet ---------------------------------------------
+ *  Drei Bedingungen, und jede ist da, weil sie einen Fehlauslöser verhindert:
+ *
+ *  1. Sie muss deutlich sichtbar sein (alpha ≥ 0,55). Beim Auftauchen blendet
+ *     sie über eine Sekunde auf; würde es schon bei alpha 0,05 zünden, käme
+ *     der Ton, bevor etwas zu sehen ist.
+ *  2. Sie muss in den inneren zwei Dritteln des Bildes stehen. Am Rand hätte
+ *     man die roten Augen womöglich gar nicht wahrgenommen, und ein Schreck
+ *     ohne Bild ist nur Lärm.
+ *  3. Es darf kein Gebäude dazwischen stehen. Sie kann hinter dem Motel
+ *     erscheinen — dann sieht man nichts und soll auch nichts hören.
+ *
+ *  Und es zündet einmal je **Stelle**, nicht je Erscheinen: Sie flackert,
+ *  wenn man sie anstarrt, und blendet bei jedem Auftauchen neu auf. Gemerkt
+ *  wird deshalb der Ort des letzten Schrecks; liegt die neue Stelle näher
+ *  als SCHRECK_NEU, gilt sie als dieselbe und bleibt stumm. Das deckt auch
+ *  den Fall in der fünften Nacht ab, wo sichtung() und finaleBruecke() sie
+ *  beide an genau denselben Punkt setzen.
+ */
+var SCHRECK_NEU=2.5;
+function armSchreck(){
+  MOTH.schockAn = !(MOTH.schockAt &&
+    Math.hypot(MOTH.x-MOTH.schockAt[0], MOTH.z-MOTH.schockAt[1]) < SCHRECK_NEU);
+}
+// Steht sie in den inneren zwei Dritteln? Gerechnet über die Kamerabasis
+// statt über die Projektionsmatrix — die wird erst beim Zeichnen gebaut,
+// gefragt wird aber schon in der Aktualisierung.
+function mothImBild(){
+  var cp=Math.cos(P.pitch), sp=Math.sin(P.pitch),
+      cy=Math.cos(P.yaw),   sy=Math.sin(P.yaw);
+  var fx=sy*cp, fy=sp, fz=-cy*cp;
+  var rx=cy, rz=sy;                                   // rechts, waagrecht
+  var ux=-sy*sp, uy=cp, uz=cy*sp;                     // oben = rechts × vorn
+  var dx=MOTH.x-P.x, dy=MOTH.y-P.y, dz=MOTH.z-P.z;
+  var t=dx*fx+dy*fy+dz*fz;
+  if(t<=0.5) return false;                            // im Rücken
+  var th=Math.tan(1.12/2), asp=(RW&&RH)?RW/RH:1.6;    // dasselbe Sichtfeld wie persp()
+  var ndcX=(dx*rx+dz*rz)/t/(th*asp);
+  var ndcY=(dx*ux+dy*uy+dz*uz)/t/th;
+  return Math.abs(ndcX)<=0.667 && Math.abs(ndcY)<=0.667;
+}
+// Strecke gegen alle Grundrisse (Slab-Test in der Ebene). Die Körper haben
+// keine Höhe, aber sie schwebt auf 1,6 m und Häuser sind höher — für die
+// Frage „steht ein Haus dazwischen" reicht das.
+function sichtFrei(ax,az,bx,bz){
+  var dx=bx-ax, dz=bz-az;
+  for(var i=0;i<boxes.length;i++){
+    var q=boxes[i], t0=0, t1=1, ok=true, a,b,s;
+    if(Math.abs(dx)<1e-6){ if(ax<q.x0||ax>q.x1) ok=false; }
+    else { a=(q.x0-ax)/dx; b=(q.x1-ax)/dx; if(a>b){s=a;a=b;b=s;}
+           if(a>t0)t0=a; if(b<t1)t1=b; }
+    if(ok){
+      if(Math.abs(dz)<1e-6){ if(az<q.z0||az>q.z1) ok=false; }
+      else { a=(q.z0-az)/dz; b=(q.z1-az)/dz; if(a>b){s=a;a=b;b=s;}
+             if(a>t0)t0=a; if(b<t1)t1=b; }
+    }
+    if(ok && t0<=t1) return false;
+  }
+  return true;
+}
+
 function spawnMoth(){
   var st=presenceStage(), mx, mz;
   if(st===0){                                  // nur ein Flügelschlag im Rücken
@@ -5947,6 +6107,7 @@ function spawnMoth(){
   MOTH.x=mx; MOTH.z=mz; MOTH.y=groundY(mx,mz)+1.60;
   MOTH.active=true; MOTH.mode=st; MOTH.stare=0; MOTH.alpha=0; MOTH.seed=rnd()*10;
   MOTH.life = st===3 ? 55 : (st===2 ? rr(16,24) : rr(11,17));
+  armSchreck();
 }
 function banishMoth(silent){
   if(!MOTH.active) return;
@@ -6196,6 +6357,9 @@ function update(dt){
   P.bob+=speed*dt*3.1;
   var amp = REDUCED ? 0 : 1;                  // Kopfschwanken und Kameraneigung
   P.sway=lerp(P.sway, amp*Math.sin(P.bob*0.5)*0.010*clamp(speed/2.2,0,1), 1-Math.pow(0.02,dt));
+  // Das Zucken klingt eigenständig ab. In P.sway hineinzuschreiben brächte
+  // nichts: der lerp darüber zieht in zwei Bildern alles wieder heraus.
+  if(P.zuck>0) P.zuck=Math.max(0, P.zuck-dt*2.6);
   P.y=lerp(P.y, gy+1.70+amp*Math.sin(P.bob)*0.042*clamp(speed/2.2,0,1), 1-Math.pow(0.0002,dt));
   P.torch=lerp(P.torch,P.torchTarget,1-Math.pow(0.001,dt));
 
@@ -6284,6 +6448,18 @@ function update(dt){
     G.dreadTarget=Math.max(G.dreadTarget, clamp(1.25-md/40,0,0.90)+MOTH.stare*0.35);
     var stareLimit = MOTH.mode>=3 ? 1e9 : (MOTH.mode===2 ? 2.9 : 1.5);
     var nearLimit  = MOTH.mode>=3 ? 5.0 : 11.0;
+    /* Der Schreck. Alle Bedingungen müssen im selben Bild gelten — sie ist
+       deutlich da, sie steht im Bild, und nichts steht dazwischen. Die
+       Sichtprüfung läuft nur, solange noch nicht ausgelöst wurde; danach
+       kostet die Zeile nichts mehr. */
+    if(MOTH.schockAn && MOTH.alpha>=0.55 && md<50 && mothImBild()
+       && sichtFrei(P.x,P.z,MOTH.x,MOTH.z)){
+      MOTH.schockAn=false;
+      MOTH.schockAt=[MOTH.x,MOTH.z];
+      sfxSchreck();
+      G.dreadTarget=Math.min(1, G.dreadTarget+0.45);
+      P.zuck=1;                       // ein Zusammenzucken, kein Kameraschwenk
+    }
     if(MOTH.stare>stareLimit || md<nearLimit || MOTH.life<=0) banishMoth();
   } else {
     G.dreadTarget=Math.max(0,G.dreadTarget-dt*0.22);
@@ -6475,7 +6651,10 @@ function render(dt){
   if(!FB.main||!pVol) return;
   updateAutos();
   var cp=Math.cos(P.pitch), sp=Math.sin(P.pitch);
-  var roll=P.sway;
+  // Beim Schreck kippt der Kopf kurz weg und schwingt aus — knapp zwei Grad,
+  // nicht mehr. Ein größerer Ausschlag risse einem die Kamera aus der Hand,
+  // und das liest sich als Fehler, nicht als Erschrecken.
+  var roll=P.sway + (P.zuck>0 ? Math.sin(P.zuck*13.5)*P.zuck*P.zuck*0.034 : 0);
   var fwd=[Math.sin(P.yaw)*cp, sp, -Math.cos(P.yaw)*cp];
   var right=[Math.cos(P.yaw)+0, 0, Math.sin(P.yaw)];
   var up=[-Math.sin(P.yaw)*sp+right[0]*roll, cp, Math.cos(P.yaw)*sp+right[2]*roll];
