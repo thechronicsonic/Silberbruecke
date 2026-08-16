@@ -1,0 +1,13 @@
+# Bewusst nicht im öffentlichen Repository:
+#
+# docs/   — die Story-Bibel mit dem Wortlaut aller vierzig Aussagen und den
+#           beiden Enden. Wer das Repository durchsieht, hätte das Spiel damit
+#           gelesen, bevor er es gespielt hat. Für eine Testrunde ist das das
+#           Gegenteil von hilfreich.
+# archiv/ — sechs alte Stände, zusammen rund 0,8 MB. Für Tester ohne Wert.
+#
+# Beides liegt weiter im Projektordner. Aufnehmen lässt es sich jederzeit;
+# wieder herausnehmen ist aus einem veröffentlichten Verlauf mühsam, und
+# deshalb steht es fürs Erste hier.
+docs/
+archiv/
