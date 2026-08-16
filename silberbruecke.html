@@ -4481,17 +4481,95 @@ function sfxType(){
   envg(g,t,0.022+Math.random()*0.010,0.0016,0.030);
   s.start(t); s.stop(t+0.07);
 }
-function sfxChime(pan){
+/* --- Der Hörer -----------------------------------------------------------
+ *  Wird jedes Bild nachgeführt, nicht nur beim Auslösen eines Klangs. Erst
+ *  dadurch wandert ein noch klingender Ton mit, wenn man den Kopf dreht —
+ *  und genau diese Bewegung ist es, an der ein Ohr eine Richtung festmacht.
+ *  Ein Ton, der beim Drehen stehen bleibt, klingt wie im Kopf, nicht wie im
+ *  Tal. Web Audio rechnet rechtshändig mit −z nach vorn, also derselben
+ *  Konvention wie das Spiel; die Vektoren gehen unverändert hinein.
+ */
+function hoererAusrichten(){
+  if(!A.on || !A.ctx.listener) return;
+  var L=A.ctx.listener;
+  var cp=Math.cos(P.pitch), sp=Math.sin(P.pitch),
+      cy=Math.cos(P.yaw),   sy=Math.sin(P.yaw);
+  var fx=sy*cp, fy=sp, fz=-cy*cp;
+  var ux=-sy*sp, uy=cp, uz=cy*sp;
+  if(L.positionX){
+    L.positionX.value=P.x; L.positionY.value=P.y; L.positionZ.value=P.z;
+    L.forwardX.value=fx;   L.forwardY.value=fy;   L.forwardZ.value=fz;
+    L.upX.value=ux;        L.upY.value=uy;        L.upZ.value=uz;
+  } else if(L.setPosition){
+    L.setPosition(P.x,P.y,P.z); L.setOrientation(fx,fy,fz,ux,uy,uz);
+  }
+}
+
+/* --- Die Antwort auf das Lauschen ----------------------------------------
+ *  Vorher ein Stereo-Schwenk aus einem einzigen Zahlenwert. Der war für
+ *  links und rechts richtig gerechnet — aber genau voraus und genau im
+ *  Rücken ergibt er beide Male null. Stereo allein kann vorne und hinten
+ *  nicht unterscheiden, und das ist die Hälfte der Richtungen.
+ *
+ *  Jetzt ein echter Raumklang mit HRTF: Der Kopf filtert, was von hinten
+ *  kommt, anders als das von vorn, und genau diese Färbung wertet das Ohr
+ *  aus. Dazu zwei Dinge, die vorher fehlten:
+ *
+ *  Ein **Einsatz**. Drei lange Sinustöne mit 2,4 s Ausklang sind das am
+ *  schlechtesten ortbare Signal überhaupt; geortet wird über den Zeitversatz
+ *  zwischen den Ohren beim Anschlag, und eine Fläche hat keinen Anschlag.
+ *  Deshalb steht jetzt ein kurzer heller Anschlag davor und nach einer
+ *  Dreiviertelsekunde ein zweiter, leiserer: Beim zweiten hat man den Kopf
+ *  schon gedreht und kann sich vergewissern.
+ *
+ *  Und eine **Entfernung**. Fern klingt leiser, dumpfer und halliger, nah
+ *  klar und trocken. Der Nachhall geht bewusst am Raumklang vorbei — ein
+ *  verhallter Anteil trägt keine Richtung mehr und würde das Bild nur
+ *  verwischen. Gedämpft wird sanft: Das hier ist eine Antwort, kein
+ *  Schallereignis, und aus hundert Metern soll sie noch zu hören sein.
+ */
+function sfxChime(wx,wz){
   if(!A.on) return;
-  var t=A.ctx.currentTime, out=A.ctx.createGain(); out.gain.value=1;
-  var p=A.ctx.createStereoPanner?A.ctx.createStereoPanner():null;
-  if(p){ p.pan.value=clamp(pan||0,-1,1); out.connect(p); p.connect(A.master); p.connect(A.rev); }
-  else { out.connect(A.master); out.connect(A.rev); }
-  [220,330,553].forEach(function(f,k){
-    var o=A.ctx.createOscillator(); o.type='sine'; o.frequency.value=f;
-    var g=A.ctx.createGain(); o.connect(g); g.connect(out);
-    envg(g,t,0.13/(k+1),0.02,2.4+k*0.5); o.start(t); o.stop(t+3.4);
-  });
+  hoererAusrichten();
+  var t=A.ctx.currentTime;
+  var d=Math.hypot(wx-P.x, wz-P.z);
+  var fern=clamp((d-14)/95, 0, 1);
+
+  var pan=A.ctx.createPanner();
+  pan.panningModel='HRTF'; pan.distanceModel='linear';
+  pan.refDistance=1; pan.maxDistance=10000; pan.rolloffFactor=0;   // Abstand macht die Hüllkurve
+  var py=P.y-0.1;
+  if(pan.positionX){ pan.positionX.value=wx; pan.positionY.value=py; pan.positionZ.value=wz; }
+  else if(pan.setPosition) pan.setPosition(wx,py,wz);
+
+  // Luft schluckt die Höhen zuerst — das ist der stärkste Entfernungshinweis.
+  var lp=A.ctx.createBiquadFilter(); lp.type='lowpass';
+  lp.frequency.value=7200-5200*fern; lp.Q.value=0.4;
+  var lvl=A.ctx.createGain(); lvl.gain.value=1-0.52*fern;
+
+  lp.connect(lvl); lvl.connect(pan); pan.connect(A.master);
+  // Der Hall bleibt außerhalb der Ortung, dafür wächst er mit der Entfernung.
+  var hall=A.ctx.createGain(); hall.gain.value=0.22+0.55*fern;
+  lvl.connect(hall); hall.connect(A.rev);
+
+  function anschlag(bei, kraft){
+    var s=noiseSrc(), bp=A.ctx.createBiquadFilter();
+    bp.type='bandpass'; bp.frequency.value=2900; bp.Q.value=1.1;
+    var g=A.ctx.createGain();
+    g.gain.setValueAtTime(0.0001,bei);
+    g.gain.exponentialRampToValueAtTime(0.20*kraft,bei+0.003);   // harter Einsatz
+    g.gain.exponentialRampToValueAtTime(0.0001,bei+0.085);
+    s.connect(bp); bp.connect(g); g.connect(lp);
+    s.start(bei); s.stop(bei+0.2);
+    [220,330,553].forEach(function(f,k){
+      var o=A.ctx.createOscillator(); o.type='sine'; o.frequency.value=f;
+      var og=A.ctx.createGain(); o.connect(og); og.connect(lp);
+      envg(og,bei,(0.13/(k+1))*kraft,0.02,2.4+k*0.5);
+      o.start(bei); o.stop(bei+3.4);
+    });
+  }
+  anschlag(t, 1.0);
+  anschlag(t+0.75, 0.55);        // zum Vergewissern, nachdem man sich gedreht hat
 }
 /* Das eine Kettenglied. Ein Ton wie eine übergroße Saite — und er hat eine
    Tonhöhe: 41 Hz, das tiefe E, die einundvierzig Schwingungen in der Sekunde,
@@ -5964,10 +6042,6 @@ document.getElementById('flash2').addEventListener('change',function(e){ setSoft
 document.getElementById('sens').addEventListener('input',function(e){ sens=e.target.value/100; });
 
 /* ------------------------------------------------------------ Lauschen */
-function relPan(dx,dz){
-  var r=[Math.cos(P.yaw),Math.sin(P.yaw)], L=Math.sqrt(dx*dx+dz*dz)||1;
-  return clamp((r[0]*dx+r[1]*dz)/L,-1,1);
-}
 function listen(){
   if(G.state!=='play'||G.listenCd>0||speech.active) return;
   G.listenCd=6;
@@ -5977,9 +6051,9 @@ function listen(){
     var dx=ECHOES[i].x-P.x, dz=ECHOES[i].z-P.z, d=dx*dx+dz*dz;
     if(d<bd){ bd=d; best=ECHOES[i]; }
   }
-  if(!best){ sfxChime(relPan(BX-P.x,RIVER_Z-P.z)); think("Es antwortet vom Fluss her."); return; }
+  if(!best){ sfxChime(BX,RIVER_Z); think("Es antwortet vom Fluss her."); return; }
   best.pulse=3.0;
-  sfxChime(relPan(best.x-P.x,best.z-P.z));
+  sfxChime(best.x,best.z);
 }
 
 /* ----------------------------------------------------------- Kollision */
@@ -6360,6 +6434,7 @@ function update(dt){
   // Das Zucken klingt eigenständig ab. In P.sway hineinzuschreiben brächte
   // nichts: der lerp darüber zieht in zwei Bildern alles wieder heraus.
   if(P.zuck>0) P.zuck=Math.max(0, P.zuck-dt*2.6);
+  hoererAusrichten();          // damit klingende Töne beim Drehen mitwandern
   P.y=lerp(P.y, gy+1.70+amp*Math.sin(P.bob)*0.042*clamp(speed/2.2,0,1), 1-Math.pow(0.0002,dt));
   P.torch=lerp(P.torch,P.torchTarget,1-Math.pow(0.001,dt));
 
