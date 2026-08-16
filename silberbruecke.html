@@ -4530,10 +4530,17 @@ function hoererAusrichten(){
  */
 function sfxChime(wx,wz){
   if(!A.on) return;
+  /* Unbrauchbare Zahlen fallen hier weg, statt weiterzulaufen. Ein NaN kommt
+     bis zu einem AudioParam durch, und der wirft dann — mitten in dem Ablauf,
+     der die Aussage abschließt. Genau so ist es passiert: ein Aufruf mit
+     einem alten Zahlenwert statt Koordinaten, und die Nacht ließ sich nicht
+     mehr beenden. Ein Geräusch soll ausfallen dürfen, nicht das Spiel. */
+  if(!isFinite(wx)||!isFinite(wz)){ wx=P.x; wz=P.z; }
   hoererAusrichten();
   var t=A.ctx.currentTime;
   var d=Math.hypot(wx-P.x, wz-P.z);
   var fern=clamp((d-14)/95, 0, 1);
+  if(!isFinite(fern)) fern=0;
 
   var pan=A.ctx.createPanner();
   pan.panningModel='HRTF'; pan.distanceModel='linear';
@@ -5060,8 +5067,13 @@ function nextChapter(){
 }
 function collectEcho(e){
   e.found=true; G.found++; G.seiten++; setCount(); saveGame();
-  say(e.t, e.src); sfxChime(0);
-  // Die Folgen hängen jetzt am Schließen des Fensters, nicht an einer geschätzten
+  say(e.t, e.src);
+  /* Die Fortsetzung wird **vor** dem Klang gesetzt. Vorher stand sfxChime
+     dazwischen — und als der Aufruf einmal falsche Zahlen bekam, warf er,
+     `speech.onDone` wurde nie zugewiesen, und die Nacht konnte sich nicht
+     mehr schließen. Ein Geräusch darf das Spiel nicht anhalten können; die
+     Reihenfolge allein sorgt dafür, dass es das nie wieder kann. */
+  // Die Folgen hängen am Schließen des Fensters, nicht an einer geschätzten
   // Lesedauer — der Spieler bestimmt das Tempo selbst.
   speech.onDone = function(){
     // Eine Aussage in dieser Akte hat keinen Nachhall — die zählende Stimme
@@ -5071,6 +5083,7 @@ function collectEcho(e){
     if(G.found<ECHOES.length) beat(9.5, spawnMoth);             // dann meldet sich die Präsenz
     stageBeats(G.found, 0);
   };
+  sfxChime(e.x, e.z);
 }
 
 /* --------------------------------------------------------- Dialogfenster
@@ -5145,7 +5158,14 @@ function pad2(n){ return ('0'+n).slice(-2); }
 function setCount(){
   elCnt.textContent=pad2(G.found)+' / '+pad2(ECHOES.length||0);
   elAkteN.textContent='Akte '+pad2(G.seiten)+' / '+pad2(seitenGesamt());
-  if(ECHOES.length && G.found===ECHOES.length) elGoal.classList.add('on');
+  /* Die Anzeige stand fest auf „Die Brücke" — aber dorthin geht es nur in
+     der letzten Nacht. In den vier davor schließt sich die Nacht von selbst,
+     sobald die letzte Aussage nachgeklungen ist; wer dann „Die Brücke" liest,
+     sucht einen Weg, den es nicht gibt. Jetzt sagt sie, was wirklich ansteht. */
+  if(ECHOES.length && G.found===ECHOES.length){
+    elGoal.textContent = CH.finale ? 'Die Brücke' : 'Genug für heute';
+    elGoal.classList.add('on');
+  }
 }
 
 /* ------------------------------------------------------------ Untersuchen
@@ -5226,10 +5246,11 @@ function examine(){
    Sie ist nur eine Seite mehr in der Akte — und am Ende zählt genau das. */
 function collectDoc(d){
   d.found=true; G.docs++; G.seiten++; setCount(); saveGame();
-  say(d.t, d.src); sfxChime(1);
-  speech.onDone = function(){
+  say(d.t, d.src);
+  speech.onDone = function(){                  // wie oben: erst die Fortsetzung
     if(d.n) beat(1.4, function(){ showEcho(d.n); d.nShown=true; saveGame(); });
   };
+  sfxChime(d.x, d.z);
 }
 
 /* --------------------------------------------------------------- Die Akte
