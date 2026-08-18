@@ -135,6 +135,22 @@
   .afkey{display:block;margin-top:12px;font-family:var(--util);text-transform:uppercase;
        letter-spacing:.3em;font-size:10px;color:var(--slate);}
 
+  /* --- Überleben --------------------------------------------------------
+     Die Bestzeiten als Aktenzeilen, die Laufzeit in der Anzeigenschrift.
+     Nichts davon erfindet eine neue Sprache — der Modus trägt die des
+     restlichen Spiels. */
+  .sheet.sv{width:min(640px,92vw);}
+  .bz{font-size:13px;color:var(--bone-dim);margin:10px 0 6px;}
+  .bz div{display:flex;justify-content:space-between;gap:14px;
+        padding:6px 2px;border-bottom:1px solid rgba(56,72,90,.3);
+        font-variant-numeric:tabular-nums;}
+  .bz .neu{color:var(--amber);}
+  .bz .leer{color:var(--slate);font-style:italic;border-bottom:0;}
+  .svzeit{font-family:var(--display);font-size:clamp(38px,7vw,62px);
+        letter-spacing:.05em;color:var(--bone);margin:16px 0 20px;}
+  .svzeit small{display:block;font-family:var(--util);font-size:11px;
+        letter-spacing:.34em;color:var(--rust);margin-top:6px;text-transform:uppercase;}
+
   /* --- Die Karte ------------------------------------------------------
      Die Leinwand bringt ihr eigenes Seitenverhältnis mit (1000:660) und
      darf nie über die Fensterhöhe hinauswachsen — sonst rutscht die
@@ -270,7 +286,7 @@
   <div id="flash"></div>
 
   <div id="hud">
-    <span>Aussagen <b id="cnt">00 / 08</b></span>
+    <span id="cntwrap">Aussagen <b id="cnt">00 / 08</b></span>
     <span class="rule"></span>
     <span id="akten">Akte 00 / 40</span>
     <span id="goal">Die Brücke</span>
@@ -333,6 +349,7 @@
       <div class="row">
         <button class="go" id="begin" disabled>Die Straße betreten</button>
         <button class="go alt hidden" id="cont" disabled>Zurück auf die Straße</button>
+        <button class="go alt" id="surv" disabled>Überleben</button>
       </div>
       <div class="foot">Kopfhörer empfohlen · Kein Kampf · Kein Verlieren</div>
     </div>
@@ -405,6 +422,65 @@
       <div class="afz" style="--v:7">
         <button class="go" id="afgo">Die Straße betreten</button>
         <span class="afkey">Leertaste</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Überleben: Einführung, Totenblatt, Siegblatt. Drei Blätter derselben
+       Akte — der Modus erklärt sich in ihrer Sprache, nicht in Spielbegriffen. -->
+  <div id="survintro" class="card hidden">
+    <div class="sheet sv">
+      <div class="stamp">Bezirk Kanawha<b>Nicht überliefert</b></div>
+      <div class="eyebrow">Überleben · eine Nacht</div>
+      <h2>Die verstreute Akte</h2>
+      <p class="lede">Der Wind hat die Mappe aufgerissen. Acht Blätter, verweht zwischen
+        Haltestelle und Brücke. Hol sie zurück, bevor <em>er</em> sie holt —
+        und dann über den Fluss.</p>
+      <dl class="keys">
+        <dt>Tab</dt><dd>Lauschen weist zum nächsten Blatt. Er hört es auch.</dd>
+        <dt>F</dt><dd>Das Licht hilft dir. Es hilft auch ihm.</dd>
+        <dt>Blick</dt><dd>Sieh ihn an, und er steht still. Nicht zu lange.</dd>
+        <dt>8 / 8</dt><dd>Dann zur Brücke. Renn.</dd>
+      </dl>
+      <div class="hr"></div>
+      <div class="eyebrow">Bestzeiten</div>
+      <div class="bz" id="bz0"></div>
+      <div class="row">
+        <button class="go" id="svgo">Die Nacht beginnt</button>
+        <button class="go alt" id="svzurueck">Zurück</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tot" class="card hidden">
+    <div class="sheet sv">
+      <div class="stamp">Formular 41-C<b>Abbruch</b></div>
+      <div class="eyebrow">Bezirk Kanawha · Fundbericht</div>
+      <h2>Die Aufzeichnung endet hier.</h2>
+      <p class="lede" id="totText"></p>
+      <div class="svzeit" id="totZeit"></div>
+      <div class="eyebrow">Bestzeiten</div>
+      <div class="bz" id="bz1"></div>
+      <div class="row">
+        <button class="go" id="totAgain">Noch einmal</button>
+        <button class="go alt" id="totTitel">Zur Titelseite</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sieg" class="card hidden">
+    <div class="sheet sv">
+      <div class="stamp">Formular 41-C<b>Vollständig</b></div>
+      <div class="eyebrow">Über den Fluss</div>
+      <h2>Acht von acht.</h2>
+      <p class="lede">Die Mappe ist voll, und du bist auf der anderen Seite.
+        Hinter dir steht er am Brückenkopf und sieht dir nach.</p>
+      <div class="svzeit" id="siegZeit"></div>
+      <div class="eyebrow">Bestzeiten</div>
+      <div class="bz" id="bz2"></div>
+      <div class="row">
+        <button class="go" id="siegAgain">Noch einmal</button>
+        <button class="go alt" id="siegTitel">Zur Titelseite</button>
       </div>
     </div>
   </div>
@@ -4649,8 +4725,12 @@ function sfxChime(wx,wz){
  *  Die Frequenzen fallen zum Schluss leicht ab. Ein Ton, der auf seiner
  *  Höhe endet, klingt entschlossen; einer, der abrutscht, klingt verletzt.
  */
-function sfxSchreck(){
+function sfxSchreck(amt){
   if(!A.on) return;
+  /* amt skaliert den Stich. Im Überlebensmodus erscheint er alle paar Sekunden
+     neu — die volle Geige bei jeder Sichtung stumpft in zwei Minuten ab. Nah
+     schreit sie, fern sticht sie nur. */
+  amt = amt===undefined ? 1 : clamp(amt, 0.25, 1.3);
   var t=A.ctx.currentTime;
   /* Alles läuft durch einen Begrenzer. Sechs Sägezähne, ein Formant mit +9 dB,
      dazu Kratzen und Sub — die Summe überschreitet 1 mühelos, und die Web-Audio-
@@ -4686,8 +4766,8 @@ function sfxSchreck(){
       o.detune.value=det*1.6;
       var g=A.ctx.createGain();
       g.gain.setValueAtTime(0.0001,t);
-      g.gain.exponentialRampToValueAtTime(0.115*v[1],t+0.008);   // harter Strich
-      g.gain.exponentialRampToValueAtTime(0.062*v[1],t+0.30);
+      g.gain.exponentialRampToValueAtTime(0.115*v[1]*amt,t+0.008);   // harter Strich
+      g.gain.exponentialRampToValueAtTime(0.062*v[1]*amt,t+0.30);
       g.gain.exponentialRampToValueAtTime(0.0001,t+1.20);
       o.connect(g); g.connect(trem);
       o.start(t); o.stop(t+1.3);
@@ -4699,7 +4779,7 @@ function sfxSchreck(){
   bf.type='bandpass'; bf.frequency.value=4200; bf.Q.value=0.8;
   var bg=A.ctx.createGain();
   bg.gain.setValueAtTime(0.0001,t);
-  bg.gain.exponentialRampToValueAtTime(0.26,t+0.004);
+  bg.gain.exponentialRampToValueAtTime(0.26*amt,t+0.004);
   bg.gain.exponentialRampToValueAtTime(0.0001,t+0.14);
   s.connect(bf); bf.connect(bg); bg.connect(out);
   s.start(t); s.stop(t+0.25);
@@ -4710,7 +4790,7 @@ function sfxSchreck(){
   sub.frequency.exponentialRampToValueAtTime(34,t+1.05);
   var sg=A.ctx.createGain();
   sg.gain.setValueAtTime(0.0001,t+0.10);
-  sg.gain.exponentialRampToValueAtTime(0.34,t+0.16);
+  sg.gain.exponentialRampToValueAtTime(0.34*amt,t+0.16);
   sg.gain.exponentialRampToValueAtTime(0.0001,t+1.5);
   sub.connect(sg); sg.connect(lim);       // auch der Sub durch den Begrenzer
   sub.start(t+0.10); sub.stop(t+1.6);
@@ -4792,7 +4872,7 @@ var P={ x:roadX(133), z:133, y:0, vx:0, vz:0, yaw:0, pitch:-0.03,
         bob:0, stepAcc:0, torch:0, torchTarget:1, walked:0, sway:0, spd01:0,
         zuck:0 };
 P.y = terrainH(P.x,P.z)+1.70;
-var G={ state:'load', t:0, found:0, dread:0, dreadTarget:0, nextThought:55,
+var G={ state:'load', mode:'story', t:0, found:0, dread:0, dreadTarget:0, nextThought:55,
         listenCd:0, blockMsg:0, finaleT:0, frame:0,
         emit:1, emitTarget:1, rainAmt:1, rainTarget:1, torchKill:0,   // Regler der Inszenierung
         droneBoost:1, droneBoostTarget:1,
@@ -5059,6 +5139,389 @@ function endeBSchnitt(){
   });
 }
 
+/* =================================================================== *
+ *  ÜBERLEBEN — Die verstreute Akte.
+ *
+ *  Acht Blätter des Formulars 41-C, verweht an acht von sechzehn
+ *  Wahrzeichen, je Lauf neu gewählt. Er jagt nach einer einzigen Regel,
+ *  die zur Sichtung von 1966 passt: Solange man ihn ansieht, steht er.
+ *  Wegsehen lässt ihn springen — mit jedem Blatt kürzer und näher. Wer
+ *  ihn zu lange anstarrt, vertreibt ihn, und er kommt näher wieder:
+ *  Der Blick ist Werkzeug, nicht Zuflucht.
+ *
+ *  Alles kostet. Lauschen findet das nächste Blatt, aber er hört es.
+ *  Das Licht zeigt den Weg, aber er sieht es. Ab dem siebten Blatt hält
+ *  ihn auch der Blick nicht mehr ganz. Nach dem achten steht kaltes Licht
+ *  über der Brücke, und gewonnen hat, wer die Flussmitte erreicht.
+ *
+ *  Der Modus fasst den Story-Spielstand nie an (saveGame riegelt ab) und
+ *  läuft in derselben Welt — er leiht sich ECHOES für die Blätter, damit
+ *  Zielen, Leuchten, Lauschen und Zähler ohne Sonderwege funktionieren.
+ * =================================================================== */
+var SURV={ aktiv:false, t:0, got:0, telT:0, herzT:0, hudT:0,
+           schutz:16, lampIdx:-1, lunge:0 };
+var ZEIT_KEY='sb.ueberleben.v1';
+
+function fmtZeit(s){
+  var m=Math.floor(s/60), r=s-m*60;
+  return m+':'+('0'+r.toFixed(1)).slice(-4);
+}
+function zeitenLaden(){
+  try{ var a=JSON.parse(localStorage.getItem(ZEIT_KEY)||'[]');
+       return Array.isArray(a)?a:[]; }catch(e){ return []; }
+}
+function zeitenSpeichern(a){
+  try{ localStorage.setItem(ZEIT_KEY, JSON.stringify(a.slice(0,5))); }catch(e){}
+}
+function renderZeiten(elId, neuIdx){
+  var el=document.getElementById(elId), a=zeitenLaden(), h='';
+  if(!a.length) h='<div class="leer">Noch keine überstandene Nacht.</div>';
+  else a.forEach(function(z,i){
+    var d=new Date(z.d||0);
+    h+='<div'+(i===neuIdx?' class="neu"':'')+'><span>'+(i+1)+'. &nbsp;'+fmtZeit(z.t)+'</span>'+
+       '<span>'+('0'+d.getDate()).slice(-2)+'.'+('0'+(d.getMonth()+1)).slice(-2)+'.'+
+       String(d.getFullYear()).slice(-2)+'</span></div>';
+  });
+  el.innerHTML=h;
+}
+
+/* Der Schreck-Auslöser, geteilt mit der Erzählung: einmal je Stelle, nur wenn
+   er deutlich im Bild steht und nichts dazwischen ist. amt = Nähe. */
+function schreckPruefen(md, amt){
+  if(!(MOTH.schockAn && MOTH.alpha>=0.55 && md<50 && mothImBild()
+       && sichtFrei(P.x,P.z,MOTH.x,MOTH.z))) return false;
+  MOTH.schockAn=false;
+  MOTH.schockAt=[MOTH.x,MOTH.z];
+  sfxSchreck(amt);
+  G.dreadTarget=Math.min(1, G.dreadTarget+0.45*amt);
+  P.zuck=Math.max(P.zuck, amt>=0.9?1:0.6);
+  return true;
+}
+
+// Flügelschlag mit Richtung: derselbe Raumklang wie das Lauschen. Dass es
+// hinter einem klingt, ist die halbe Angst — deshalb nicht sfxWings (mono).
+function sfxFluegel(wx,wz){
+  if(!A.on) return;
+  hoererAusrichten();
+  var t=A.ctx.currentTime, pan=A.ctx.createPanner();
+  pan.panningModel='HRTF'; pan.distanceModel='linear';
+  pan.refDistance=1; pan.maxDistance=10000; pan.rolloffFactor=0;
+  if(pan.positionX){ pan.positionX.value=wx; pan.positionY.value=P.y; pan.positionZ.value=wz; }
+  else if(pan.setPosition) pan.setPosition(wx,P.y,wz);
+  pan.connect(A.master);
+  var d=Math.hypot(wx-P.x,wz-P.z), lvl=clamp(1.15-d/70, 0.14, 1);
+  var s=noiseSrc(), f=A.ctx.createBiquadFilter();
+  f.type='lowpass'; f.frequency.setValueAtTime(900,t);
+  f.frequency.exponentialRampToValueAtTime(150,t+0.8);
+  var g=A.ctx.createGain(); g.gain.setValueAtTime(0.0001,t);
+  for(var k=0;k<4;k++){
+    var tt=t+k*0.16;
+    g.gain.exponentialRampToValueAtTime(0.30*lvl*(1-k/5),tt+0.05);
+    g.gain.exponentialRampToValueAtTime(0.004,tt+0.14);
+  }
+  s.connect(f); f.connect(g); g.connect(pan);
+  s.start(t); s.stop(t+0.95);
+}
+function sfxBlatt(){
+  if(!A.on) return;
+  var t=A.ctx.currentTime, s=noiseSrc(), f=A.ctx.createBiquadFilter();
+  f.type='bandpass'; f.frequency.value=2400; f.Q.value=0.7;
+  var g=A.ctx.createGain();
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.26,t+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.22);
+  s.connect(f); f.connect(g); g.connect(A.master);
+  s.start(t); s.stop(t+0.3);
+}
+
+/* Was auf den Blättern steht — eine Zeile je Fund, nicht blockierend.
+   Blatt sieben ist eine Anweisung, und wer sie liest, dreht sich um. */
+var BLATT_ZEILEN=[
+  "Blatt eins. Meine Schrift. Ich habe das nie geschrieben.",
+  "Blatt zwei. Der Rand ist angesengt.",
+  "Blatt drei. Jemand hat jede Zeile durchgezählt.",
+  "Blatt vier. Es lag unter einem Stein. Der Stein war warm.",
+  "Blatt fünf. Die Rückseite ist beschrieben. Nicht von mir.",
+  "Blatt sechs. Das Papier ist nass. Dort, wo es lag, hat es nicht geregnet.",
+  "Blatt sieben. Darauf steht nur: NICHT UMDREHEN.",
+  "Acht. Die Mappe ist voll. Die Brücke."
+];
+
+/* Sechzehn Kandidaten an den Wahrzeichen; acht je Lauf, paarweise mindestens
+   26 m auseinander. setzeFund (in placeEchoes) schiebt jeden aus Baukörpern
+   und setzt die Höhe — die Kandidaten müssen nur ungefähr stimmen. */
+function blattKandidaten(){
+  return [
+    [roadX(140)-6.8, 141.5], [roadX(126)-14.0, 122.5],
+    [HOF_X+2.0,      HOF_Z-4.6], [roadX(124)+5.4, 127.0],
+    [roadX(58)+7.6,  56.4],  [roadX(52)-9.5,  52.0],
+    [roadX(26)-10.5, 26.0],  [roadX(22)+13.5, 22.0],
+    [SIDES[0].x0+15, SIDES[0].z+7.5], [SIDES[0].x1+4, SIDES[0].z-7.5],
+    [SIDES[1].x0+14, SIDES[1].z+8.2], [SIDES[1].x0+18, SIDES[1].z-26],
+    [WERK_X-3.5,     36.0],  [roadX(-66)-9.5, -63.5],
+    [roadX(72)+9.0,  66.5],  [SIDES[2].x0-11, SIDES[2].z-20]
+  ];
+}
+function blaetterWaehlen(){
+  var K=blattKandidaten().slice(), i, j;
+  for(i=K.length-1;i>0;i--){ j=(Math.random()*(i+1))|0; var t=K[i]; K[i]=K[j]; K[j]=t; }
+  var wahl=[], mind=26;
+  while(wahl.length<8){
+    for(i=0;i<K.length && wahl.length<8;i++){
+      var ok=true;
+      for(j=0;j<wahl.length;j++)
+        if(Math.hypot(K[i][0]-wahl[j][0], K[i][1]-wahl[j][1])<mind){ ok=false; break; }
+      if(ok){ wahl.push(K[i]); K.splice(i,1); i--; }
+    }
+    mind-=4;                       // zur Not lockern statt hängen
+    if(mind<8) { while(wahl.length<8 && K.length) wahl.push(K.shift()); }
+  }
+  return wahl.map(function(p,n){
+    // setzeFund liest die Rohlage aus e.p und schreibt erst dann x/z —
+    // dasselbe Format wie die Aussagen der Erzählung.
+    return { id:'blatt'+(n+1), src:'Blatt · Formular 41-C',
+             p:[p[0],p[1]], x:p[0], y:0, z:p[1], found:false, doc:true,
+             pulse:0, fade:1, t:[], n:'' };
+  });
+}
+
+/* Die Eskalation. Eine Tabelle, keine verstreuten Zahlen — damit sich der
+   ganze Jäger an einer Stelle stimmen lässt. */
+function eskal(got){
+  return {
+    intervall: clamp(15.5-1.3*got, 5.5, 15.5),   // Sekunden bis zum Sprung
+    dist:      clamp(48-3.6*got, 19, 48),        // wie nah er springt
+    hinten:    0.22+0.035*got,                   // Anteil der Sprünge in den Rücken
+    tempo:     0.8+0.17*got,                     // Schrittgeschwindigkeit m/s
+    beobachtet: got>=8 ? 0.5 : (got>=7 ? 0.3 : 0)   // Bewegung unter Blick
+  };
+}
+
+function survIntro(){
+  initAudio();
+  if(A.ctx&&A.ctx.state==='suspended') A.ctx.resume();
+  document.getElementById('title').classList.add('hidden');
+  renderZeiten('bz0', -1);
+  document.getElementById('survintro').classList.remove('hidden');
+  G.state='survintro';
+}
+function survIntroZurueck(){
+  document.getElementById('survintro').classList.add('hidden');
+  document.getElementById('title').classList.remove('hidden');
+  G.state='title';
+}
+
+function survivalGo(){
+  document.getElementById('survintro').classList.add('hidden');
+  document.getElementById('tot').classList.add('hidden');
+  document.getElementById('sieg').classList.add('hidden');
+  G.mode='survival';
+  // Weltzustand auf Nacht stellen — dunkler Ort, normaler Regen, kein Verkehr.
+  G.found=0; G.beats.length=0; G.dread=0; G.dreadTarget=0;
+  G.stepGhost=0; G.torchKill=0; G.emitTarget=0.35; G.rainTarget=0.85;
+  G.weiss=0; G.weissV=0; elFlash.style.transition='opacity .4s'; elFlash.style.opacity='0';
+  VERKEHR.an=false; VERKEHR.stauAn=false; radioAus();
+  MOTH.active=false; MOTH.alpha=0; MOTH.stare=0; MOTH.schockAt=null; MOTH.schockAn=false;
+  if(SURV.lampIdx>=0){ lamps.splice(SURV.lampIdx,1); SURV.lampIdx=-1; }
+  // Synthetisches Kapitel: ECHOES sind die Blätter. finale=true lässt die
+  // Zielanzeige bei 8/8 von selbst „Die Brücke" sagen.
+  CH={ num:'Ü', title:'Die verstreute Akte', datum:'', tage:'', karte:'',
+       eintritt:'', schluss:[], bilanz:'', finale:true,
+       echoes:blaetterWaehlen(), docs:[] };
+  ECHOES=CH.echoes; DOCS=[]; THOUGHTS=[]; WATCH=[]; thoughtDone=[];
+  SB.CH=CH; SB.ECHOES=ECHOES; SB.DOCS=DOCS;
+  placeEchoes();
+  /* setzeFund schiebt aus Baukörpern heraus — notfalls auch auf die Straße.
+     Bei den Aussagen ist das je Stelle geprüft; die Blätter wandern je Lauf,
+     also gilt die Regel hier als Netz: keines näher als 4,6 m an der Mitte. */
+  ECHOES.forEach(function(e){
+    var ab=e.x-roadX(e.z);
+    if(Math.abs(ab)<4.6){
+      e.x=roadX(e.z)+(ab>=0?4.9:-4.9);
+      e.y=groundY(e.x,e.z)+1.55;
+    }
+  });
+  // Start an der Haltestelle, Blick in den Ort — wie die erste Nacht.
+  P.x=roadX(133); P.z=133; P.yaw=0; P.pitch=-0.03; P.vx=0; P.vz=0; P.walked=0;
+  P.y=terrainH(P.x,P.z)+1.70; P.torchTarget=1;
+  SURV.aktiv=true; SURV.t=0; SURV.got=0; SURV.telT=4.5;
+  SURV.herzT=0; SURV.hudT=0; SURV.lunge=0;
+  document.getElementById('cntwrap').firstChild.nodeValue='Blätter ';
+  elCnt.parentNode.style.display='';
+  elGoal.classList.remove('on');
+  setCount(); elAkteN.textContent='Zeit 0:00.0';
+  scatterGrass(P.x,P.z); cullInstances(P.x,P.z);
+  G.state='play'; lockPointer(); masterTo(A.vol);
+  think("Der Wind hat die Mappe aufgerissen. Acht Blätter, irgendwo im Ort.");
+}
+
+/* Er springt. Bevorzugt dorthin, wo man nicht hinsieht — mit wachsendem
+   Anteil direkt in den Rücken. Nie übers Wasser, nie in ein Haus. */
+function survTeleport(distWunsch){
+  var e=eskal(SURV.got);
+  var d = distWunsch!==undefined ? distWunsch : e.dist*(0.85+Math.random()*0.3);
+  for(var v=0; v<12; v++){
+    var hinten = Math.random()<e.hinten;
+    var a = hinten ? P.yaw+Math.PI+(Math.random()-0.5)*1.2
+                   : Math.random()*TAU;
+    var x=P.x+Math.sin(a)*d, z=P.z-Math.cos(a)*d;
+    x=clamp(x,-EXT+8,EXT-8); z=clamp(z,-96,146);
+    if(Math.abs(z-RIVER_Z)<16 && Math.abs(x-BX)>=BRIDGE_BW) continue;  // nicht ins Wasser
+    if(inBoxes(x,z,1.0)) continue;
+    MOTH.x=x; MOTH.z=z; MOTH.y=groundY(x,z)+1.60;
+    MOTH.active=true; MOTH.mode=4; MOTH.alpha=0; MOTH.stare=0;
+    MOTH.seed=Math.random()*10; MOTH.life=1e9;
+    armSchreck();
+    sfxFluegel(x,z);
+    break;
+  }
+  SURV.telT = e.intervall*(0.8+Math.random()*0.4);
+}
+
+function collectBlatt(e){
+  e.found=true; SURV.got++; G.found++;
+  setCount(); sfxBlatt();
+  think(BLATT_ZEILEN[SURV.got-1]||'');
+  G.dreadTarget=Math.min(1, G.dreadTarget+0.22);
+  // Jedes Blatt ruft ihn. Das erste beendet außerdem die Schonfrist.
+  SURV.telT=Math.min(SURV.telT, 2.2);
+  if(SURV.got>=8){
+    lamps.push({p:[BX, BRIDGE_Y+6.8, RIVER_Z], c:[0.62,0.74,1.00], i:34, flick:0});
+    SURV.lampIdx=lamps.length-1;
+    sfxBurst(0.7);
+  }
+}
+
+/* Die Jagd, jedes Bild. Weeping-Angel-Kern: der Sprung-Zähler läuft nur,
+   solange er NICHT im Bild steht. */
+function survTick(dt){
+  var S=SURV; if(!S.aktiv) return;
+  S.t+=dt;
+  S.hudT-=dt;
+  if(S.hudT<=0){ S.hudT=0.1; elAkteN.textContent='Zeit '+fmtZeit(S.t); }
+  var e=eskal(S.got);
+  var frei = S.t>S.schutz || S.got>0;
+
+  if(MOTH.active){
+    var md=Math.hypot(MOTH.x-P.x, MOTH.z-P.z);
+    var sicht=sichtFrei(P.x,P.z,MOTH.x,MOTH.z);
+    var imB = MOTH.alpha>0.35 && sicht && mothImBild();
+    MOTH.alpha=Math.min(1, MOTH.alpha+dt*0.8);
+    MOTH.y=lerp(MOTH.y, groundY(MOTH.x,MOTH.z)+1.60, 1-Math.pow(0.02,dt));
+    if(imB) MOTH.stare+=dt; else MOTH.stare=Math.max(0, MOTH.stare-dt*1.4);
+    schreckPruefen(md, md<18?1.1 : (md<32?0.8:0.55));
+
+    // Bewegung: ungesehen geht er, gesehen steht er — bis zum Endspiel.
+    var faktor = imB ? e.beobachtet : 1;
+    if(faktor>0 && md>1.0 && sicht){
+      var schritt=e.tempo*faktor*dt/md;
+      MOTH.x+=(P.x-MOTH.x)*schritt;
+      MOTH.z+=(P.z-MOTH.z)*schritt;
+    }
+    // Zu langes Anstarren vertreibt ihn — und er kommt NÄHER wieder.
+    if(imB && MOTH.stare>2.6){
+      survTeleport(Math.max(11, md*0.55));
+      sfxBurst(0.5);
+    }
+    G.dreadTarget=Math.max(G.dreadTarget, clamp(1.25-md/30,0,0.92)+S.got*0.015);
+    G.droneBoostTarget=Math.max(1, 2.4-md/22);
+    if(md<24){
+      S.herzT-=dt;
+      if(S.herzT<=0){ S.herzT=Math.max(0.42, md/20); sfxHeart(); }
+    }
+    if(md<2.4 && sicht){ gefasst(); return; }
+    // Der Sprung-Zähler: Licht an zieht ihn an, Licht aus verlangsamt ihn.
+    if(!imB){
+      S.telT-=dt*(P.torchTarget>0.5?1.18:0.92);
+      if(S.telT<=0) survTeleport();
+    }
+  } else if(frei){
+    S.telT-=dt;
+    if(S.telT<=0) survTeleport();
+  } else {
+    G.droneBoostTarget=1;
+  }
+
+  if(S.got>=8 && P.z<=RIVER_Z) gewonnen();
+}
+
+/* Gefasst: er stürzt sich. Kamera auf ihn, Augen wachsen, Geige, Schnitt. */
+function gefasst(){
+  if(G.state!=='play') return;
+  SURV.aktiv=false; SURV.lunge=0;
+  G.state='gefasst'; G.finaleT=0;
+  G.focus=null; setFocus(null); G.beats.length=0;
+  sfxSchreck(1.25); sfxBurst(1.0);
+}
+function gefasstTick(dt){
+  G.finaleT+=dt; var t=G.finaleT;
+  tickStorm(dt);
+  MOTH.alpha=1;
+  SURV.lunge=Math.min(1, t*1.5);
+  // Er kommt die letzten Meter selbst.
+  var md=Math.hypot(MOTH.x-P.x, MOTH.z-P.z);
+  if(md>1.1){
+    var s=Math.min(1, dt*7/md);
+    MOTH.x+=(P.x-MOTH.x)*s; MOTH.z+=(P.z-MOTH.z)*s;
+  }
+  MOTH.y=lerp(MOTH.y, P.y+0.15, 1-Math.pow(0.01,dt));
+  // Der Blick wird auf ihn gezwungen.
+  var want=Math.atan2(MOTH.x-P.x, -(MOTH.z-P.z));
+  var diff=((want-P.yaw+Math.PI*3)%TAU)-Math.PI;
+  P.yaw+=diff*Math.min(1,dt*9);
+  P.pitch=lerp(P.pitch, Math.atan2(MOTH.y-P.y, Math.max(0.4,md)), Math.min(1,dt*9));
+  G.dread=1; elDread.style.opacity='0.95';
+  if(t>0.85 && !SURV.schwarz){
+    SURV.schwarz=true;
+    elFlash.style.background='#04060a';
+    elFlash.style.transition='opacity .22s ease';
+    elFlash.style.opacity='1';
+  }
+  if(t>1.7){
+    G.state='tot'; unlockPointer(); masterTo(A.vol*0.2);
+    SURV.schwarz=false;
+    document.getElementById('totText').textContent =
+      SURV.got>=8
+        ? 'Auf der Brücke, acht Blätter in der Mappe. Er war schneller.'
+        : 'Gefunden am Straßenrand: eine Mappe mit '+SURV.got+' von acht Blättern. Von der Trägerin, dem Träger: keine Spur.';
+    document.getElementById('totZeit').innerHTML =
+      fmtZeit(SURV.t)+'<small>'+SURV.got+' von 8 Blättern</small>';
+    renderZeiten('bz1', -1);
+    document.getElementById('tot').classList.remove('hidden');
+    elFlash.style.background='#fff'; elFlash.style.opacity='0';
+    G.dread=0; G.dreadTarget=0; elDread.style.opacity='0';
+    MOTH.active=false; SURV.lunge=0;
+  }
+}
+
+function gewonnen(){
+  if(G.state!=='play') return;
+  SURV.aktiv=false;
+  G.state='sieg'; unlockPointer(); masterTo(A.vol*0.3);
+  MOTH.active=false; G.dreadTarget=0; G.rainTarget=0.15;
+  var a=zeitenLaden();
+  a.push({t:SURV.t, d:Date.now()});
+  a.sort(function(x,y){ return x.t-y.t; });
+  var idx=a.findIndex(function(z){ return z.t===SURV.t; });
+  zeitenSpeichern(a);
+  document.getElementById('siegZeit').innerHTML =
+    fmtZeit(SURV.t)+(idx===0?'<small>Neue Bestzeit</small>':'');
+  renderZeiten('bz2', idx<5?idx:-1);
+  document.getElementById('sieg').classList.remove('hidden');
+  sfxChime(P.x, P.z);
+}
+
+document.getElementById('surv').addEventListener('click',survIntro);
+document.getElementById('svgo').addEventListener('click',survivalGo);
+document.getElementById('svzurueck').addEventListener('click',survIntroZurueck);
+document.getElementById('totAgain').addEventListener('click',survivalGo);
+document.getElementById('siegAgain').addEventListener('click',survivalGo);
+document.getElementById('totTitel').addEventListener('click',function(){ location.reload(); });
+document.getElementById('siegTitel').addEventListener('click',function(){ location.reload(); });
+// Für die Prüfung von außen — wie gotoChapter: das Spiel ruft das nie auf.
+SB.SURV=SURV; SB.survivalGo=survivalGo; SB.survTeleport=survTeleport;
+SB.eskal=eskal; SB.blattKandidaten=blattKandidaten; SB.gefasst=gefasst;
+
 /* ---------------------------------------------------------- Nachtwechsel
  *  Fünf Nächte, und zwischen ihnen liegt ein Blatt: Datum, Ausbeute, das
  *  Wenige, was Marsh selbst darüber notiert hat. Danach geht es an anderer
@@ -5288,7 +5751,9 @@ function setFocus(e){
 function examine(){
   if(G.state!=='play' || speech.active || !G.focus) return false;
   var e=G.focus; G.focus=null; setFocus(null);
-  if(e.doc) collectDoc(e); else collectEcho(e);
+  if(G.mode==='survival') collectBlatt(e);
+  else if(e.doc) collectDoc(e);
+  else collectEcho(e);
   return true;
 }
 /* Eine Beilage zieht keine Ereignisse nach sich und schließt keine Nacht ab.
@@ -5750,6 +6215,11 @@ document.getElementById('akclose').addEventListener('click',closeAkte);
  */
 var SAVE_KEY='silberbruecke.v1';
 function saveGame(){
+  /* Im Überlebensmodus wird NIE gespeichert. ECHOES hält dort die acht
+     Blätter — dieselbe Routine würde deren IDs in den Story-Spielstand
+     schreiben, und eine einzige Pause (pause() speichert) hätte den
+     Fortschritt der Nächte überschrieben. */
+  if(G.mode==='survival') return;
   try{
     var ids=[], nsh=[], L=akteListe(), i;
     for(i=0;i<L.length;i++){
@@ -5931,6 +6401,17 @@ window.addEventListener('keydown',function(e){
     if(k===' ') e.preventDefault();          // sonst rollt die Seite
     return;
   }
+  if(G.state==='survintro'){
+    if(!e.repeat && (k===' '||k==='enter')) survivalGo();
+    else if(!e.repeat && k==='escape') survIntroZurueck();
+    if(k===' ') e.preventDefault();
+    return;
+  }
+  if(G.state==='tot' || G.state==='sieg'){
+    if(!e.repeat && k==='enter') survivalGo();
+    return;
+  }
+  if(G.state==='gefasst') return;            // beim Fangen gehört ihm alles
   if(G.state==='akte'){
     if(k==='arrowup'||k==='w') akteMove(-1);
     else if(k==='arrowdown'||k==='s') akteMove(1);
@@ -5946,9 +6427,14 @@ window.addEventListener('keydown',function(e){
   if(e.repeat) return;
   if(k==='tab') listen();
   else if(k==='f') P.torchTarget = P.torchTarget>0.5?0:1;
-  else if(k==='q') checkWatch();
-  else if(k==='j') openAkte();
-  else if(k==='m') openKarte();
+  // In der Jagd gibt es keine Akte, keine Karte, keine Uhr: alles davon
+  // hieße Stehenbleiben und Lesen, und er wartet nicht.
+  else if(k==='j'||k==='m'||k==='q'){
+    if(G.mode==='survival'){ think("Keine Zeit dafür."); }
+    else if(k==='j') openAkte();
+    else if(k==='m') openKarte();
+    else checkWatch();
+  }
   else if(k==='escape'){ if(G.state==='play') pause(); else if(G.state==='pause') resume(); }
   // E ist die einzige Doppelbelegung, und sie ist eindeutig: entweder steht ein
   // Fenster offen, dann blättert E — oder es steht keins, dann sieht E nach.
@@ -6122,6 +6608,10 @@ SB.gotoChapter=function(i,seiten){
   if(G.state==='title'||G.state==='auftakt'){
     clearSave(); elAuftakt.classList.add('hidden'); enterWorld();
   }
+  // Zurück in die Erzählung, falls der Prüfer aus der Jagd kommt.
+  G.mode='story'; SURV.aktiv=false;
+  document.getElementById('cntwrap').firstChild.nodeValue='Aussagen ';
+  if(SURV.lampIdx>=0){ lamps.splice(SURV.lampIdx,1); SURV.lampIdx=-1; }
   chapterIdx=i-1;
   if(seiten!==undefined) G.seiten=seiten;
   document.getElementById('nacht').classList.add('hidden');
@@ -6153,6 +6643,9 @@ function listen(){
   if(!best){ sfxChime(BX,RIVER_Z); think("Es antwortet vom Fluss her."); return; }
   best.pulse=3.0;
   sfxChime(best.x,best.z);
+  // Der Preis des Lauschens in der Jagd: Er hört den Ton genauso — und
+  // kommt fast sofort. Ohne diesen Preis wäre TAB ein kostenloses Radar.
+  if(G.mode==='survival') SURV.telT=Math.min(SURV.telT, 1.1);
 }
 
 /* ----------------------------------------------------------- Kollision */
@@ -6397,6 +6890,7 @@ function runStages(){
     } else {
       elBarTxt.textContent='Bereit';
       elBegin.removeAttribute('disabled');
+      document.getElementById('surv').removeAttribute('disabled');
       // Ein liegengebliebener Stand darf erst angeboten werden, wenn die Welt
       // steht — applySave setzt den Spieler an eine Stelle, die es vorher nicht gab.
       var sv=readSave();
@@ -6476,8 +6970,9 @@ function frame(now){
   if(G.state!=='play') zeigeZiel(false,false);
   if(G.state==='play') update(dt);
   else if(G.state==='finale') finale(dt);
+  else if(G.state==='gefasst') gefasstTick(dt);
   else if(G.state==='ende') endeTick(dt);
-  else if(G.state==='title' || G.state==='auftakt'){
+  else if(G.state==='title' || G.state==='auftakt' || G.state==='survintro'){
     // Die Titelkamera treibt leicht, statt starr zu stehen — auch hinter dem
     // Auftaktblatt, sonst friert der Ort ein, während man es liest.
     G.t+=0; P.yaw+=dt*0.032; P.torch=0.55;
@@ -6609,7 +7104,11 @@ function update(dt){
     }
   }
 
-  if(MOTH.active){
+  // Im Überlebensmodus gehört die Präsenz der Jagd (survTick) — die
+  // Erzähl-Logik hier würde ihn bei fünf Metern verbannen, kurz bevor er
+  // fangen dürfte, und die Jagd wäre per Bauart unverlierbar.
+  if(G.mode==='survival') survTick(dt);
+  else if(MOTH.active){
     MOTH.life-=dt;
     MOTH.alpha=Math.min(1, MOTH.alpha+dt*(MOTH.mode>=3?0.40:0.7));
     var mdx=MOTH.x-P.x, mdz=MOTH.z-P.z, md=Math.hypot(mdx,mdz);
@@ -6623,18 +7122,7 @@ function update(dt){
     G.dreadTarget=Math.max(G.dreadTarget, clamp(1.25-md/40,0,0.90)+MOTH.stare*0.35);
     var stareLimit = MOTH.mode>=3 ? 1e9 : (MOTH.mode===2 ? 2.9 : 1.5);
     var nearLimit  = MOTH.mode>=3 ? 5.0 : 11.0;
-    /* Der Schreck. Alle Bedingungen müssen im selben Bild gelten — sie ist
-       deutlich da, sie steht im Bild, und nichts steht dazwischen. Die
-       Sichtprüfung läuft nur, solange noch nicht ausgelöst wurde; danach
-       kostet die Zeile nichts mehr. */
-    if(MOTH.schockAn && MOTH.alpha>=0.55 && md<50 && mothImBild()
-       && sichtFrei(P.x,P.z,MOTH.x,MOTH.z)){
-      MOTH.schockAn=false;
-      MOTH.schockAt=[MOTH.x,MOTH.z];
-      sfxSchreck();
-      G.dreadTarget=Math.min(1, G.dreadTarget+0.45);
-      P.zuck=1;                       // ein Zusammenzucken, kein Kameraschwenk
-    }
+    schreckPruefen(md, 1);
     if(MOTH.stare>stareLimit || md<nearLimit || MOTH.life<=0) banishMoth();
   } else {
     G.dreadTarget=Math.max(0,G.dreadTarget-dt*0.22);
@@ -7044,7 +7532,9 @@ function render(dt){
   if(MOTH.active&&MOTH.alpha>0.01){
     var flick=MOTH.stare>0.6?(0.55+0.45*Math.sin(G.t*30)):1, ma=MOTH.alpha*flick;
     bill(texMoth,MOTH.x,MOTH.y,MOTH.z,1.70,1.70, 0.0045,0.0052,0.0068, ma*0.97,0,true, 0.45);
-    var eyeY=MOTH.y+0.66, eS=0.24+0.04*Math.sin(G.t*2.1);
+    // Beim Fangen wachsen die Augen: er ist plötzlich ganz nah, und das
+    // Letzte, was man sieht, sind zwei rote Scheiben.
+    var eyeY=MOTH.y+0.66, eS=(0.24+0.04*Math.sin(G.t*2.1))*(1+SURV.lunge*2.6);
     bill(texGlow,MOTH.x-right[0]*0.15,eyeY,MOTH.z-right[2]*0.15,eS,eS, 4.2,0.22,0.10, ma*0.95,1,true, 0.4);
     bill(texGlow,MOTH.x+right[0]*0.15,eyeY,MOTH.z+right[2]*0.15,eS,eS, 4.2,0.22,0.10, ma*0.95,1,true, 0.4);
   }
