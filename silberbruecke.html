@@ -4453,40 +4453,71 @@ function cullInstances(px,pz){
 // Gras wird um den Spieler herum verteilt und wandert mit.
 var grassBuf=gl.createBuffer(), grassN=0, grassAt=[1e9,1e9];
 var fernBuf=gl.createBuffer(), fernN=0;
-function scatterGrass(px,pz){
-  var arr=[], fern=[], R=24, cell=1.05/Math.max(Q.grass,0.2);
-  var i0=Math.floor((px-R)/cell), i1=Math.ceil((px+R)/cell);
-  var j0=Math.floor((pz-R)/cell), j1=Math.ceil((pz+R)/cell);
-  for(var i=i0;i<=i1;i++) for(var j=j0;j<=j1;j++){
-    var hx=hash2(i*0.731, j*1.317), hz=hash2(i*2.117+7.3, j*0.913-2.1);
-    var x=i*cell+(hx-0.5)*cell, z=j*cell+(hz-0.5)*cell;
-    var dx=x-px, dz=z-pz, d2=dx*dx+dz*dz;
-    if(d2>R*R) continue;
-    if(roadW(x,z)>0.45) continue;
-    if(Math.abs(z-RIVER_Z)<13) continue;
-    if(amGleis(x,z,0.5)) continue;              // kein Gras zwischen den Schwellen
-    if(tankHof(x,z)>0.35) continue;             // und keins auf dem Tankstellenhof
-    /* Und keins durch Gebäude. Das Gras kannte Straße, Fluss und Gleis, aber
-       keine Häuser: es wuchs durch jeden Grundriss. Bei geschlossenen Wänden
-       sieht man das nicht, unter jedem Vordach und jeder Veranda sehr wohl —
-       an der Tankstelle am deutlichsten. Der Bewuchs prüft das seit jeher
-       mit inBoxes; nur das Gras tat es nie. */
-    if(inBoxes(x,z,0)) continue;
-    var y=terrainH(x,z); if(y<-2.6) continue;
-    var h3=hash2(i*3.77, j*1.93), h4=hash2(i*5.11-3.4, j*2.71+9.2);
-    var rec=[x,y-0.04,z, 0.46+h3*0.52, hx*TAU, 0.72+hz*0.55, 0.85+hz*0.35, 0.80+h3*0.50];
-    // Farne per Zufallswert auswählen, nicht als erstes Sechstel des Puffers —
-    // der ist nach Gitterspalten sortiert und sie stünden alle auf einer Seite.
-    if(h4<0.14){ rec[3]*=1.15; for(var k=0;k<8;k++) fern.push(rec[k]); }
-    else for(var k2=0;k2<8;k2++) arr.push(rec[k2]);
-  }
-  gl.bindBuffer(gl.ARRAY_BUFFER,grassBuf);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.DYNAMIC_DRAW);
-  grassN=arr.length/8;
-  gl.bindBuffer(gl.ARRAY_BUFFER,fernBuf);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(fern),gl.DYNAMIC_DRAW);
-  fernN=fern.length/8;
+/* Gras entsteht rund um den Spieler neu, sobald er sieben Meter gegangen
+   ist. Bisher in einem Stück: 2000–3500 Zellen, gemessen 1,5–6 ms — ein
+   Berg mitten in einem 16-ms-Bild, alle sieben Meter. Das Auge verzeiht
+   ein spätes Bild, die Hand auf der Maus nicht: Genau dieser Berg war das
+   gemeldete „die Maus ruckelt manchmal".
+
+   Jetzt läuft der Neubau als Auftrag über mehrere Bilder — vierzehn
+   Gitterspalten je Bild, deutlich unter einer Millisekunde — und schreibt
+   in zwei stehende Puffer. Damit entfallen auch die bei jedem Neubau
+   frischen Float32Arrays (~130 KB Müll je sieben Meter), deren Aufräumen
+   der zweite Ruckelgrund war.
+
+   Sprünge (Kapitelwechsel, Spielstand laden) bauen weiter in einem Zug:
+   dort steht eine Karte vor dem Bild, ein Ruckler ist unsichtbar — altes
+   Gras am neuen Ort wäre es nicht. */
+var GRAS_F=new Float32Array(36000), FERN_F=new Float32Array(9000), grasJob=null;
+function scatterGrass(px,pz,verteilt){
+  var R=24, cell=1.05/Math.max(Q.grass,0.2);
+  grasJob={ px:px, pz:pz, R:R, cell:cell,
+            i:Math.floor((px-R)/cell), i1:Math.ceil((px+R)/cell),
+            j0:Math.floor((pz-R)/cell), j1:Math.ceil((pz+R)/cell), g:0, f:0 };
+  // Sofort merken, nicht erst beim Abschluss: sonst sähe der Geh-Auslöser
+  // weiter „über sieben Meter" und startete den Auftrag jedes Bild neu.
   grassAt=[px,pz];
+  if(!verteilt) grasArbeit(1e9);
+}
+function grasArbeit(spaltenBudget){
+  var J=grasJob; if(!J) return;
+  var s=0;
+  while(J.i<=J.i1 && s<spaltenBudget){
+    var i=J.i, cell=J.cell;
+    for(var j=J.j0;j<=J.j1;j++){
+      var hx=hash2(i*0.731, j*1.317), hz=hash2(i*2.117+7.3, j*0.913-2.1);
+      var x=i*cell+(hx-0.5)*cell, z=j*cell+(hz-0.5)*cell;
+      var dx=x-J.px, dz=z-J.pz;
+      if(dx*dx+dz*dz>J.R*J.R) continue;
+      if(roadW(x,z)>0.45) continue;
+      if(Math.abs(z-RIVER_Z)<13) continue;
+      if(amGleis(x,z,0.5)) continue;            // kein Gras zwischen den Schwellen
+      if(tankHof(x,z)>0.35) continue;           // und keins auf dem Tankstellenhof
+      if(inBoxes(x,z,0)) continue;              // und keins durch Gebäude
+      var y=terrainH(x,z); if(y<-2.6) continue;
+      var h3=hash2(i*3.77, j*1.93), h4=hash2(i*5.11-3.4, j*2.71+9.2);
+      // Farne per Zufallswert, nicht als erstes Sechstel des Puffers — der
+      // ist nach Gitterspalten sortiert und sie stünden alle auf einer Seite.
+      var fern = h4<0.14;
+      var gr = (0.46+h3*0.52)*(fern?1.15:1);
+      var Z = fern ? FERN_F : GRAS_F, o = fern ? J.f : J.g;
+      if(o+8<=Z.length){
+        Z[o]=x; Z[o+1]=y-0.04; Z[o+2]=z; Z[o+3]=gr; Z[o+4]=hx*TAU;
+        Z[o+5]=0.72+hz*0.55; Z[o+6]=0.85+hz*0.35; Z[o+7]=0.80+h3*0.50;
+        if(fern) J.f+=8; else J.g+=8;
+      }
+    }
+    J.i++; s++;
+  }
+  if(J.i>J.i1){
+    gl.bindBuffer(gl.ARRAY_BUFFER,grassBuf);
+    gl.bufferData(gl.ARRAY_BUFFER,GRAS_F.subarray(0,J.g),gl.DYNAMIC_DRAW);
+    grassN=J.g/8;
+    gl.bindBuffer(gl.ARRAY_BUFFER,fernBuf);
+    gl.bufferData(gl.ARRAY_BUFFER,FERN_F.subarray(0,J.f),gl.DYNAMIC_DRAW);
+    fernN=J.f/8;
+    grasJob=null;
+  }
 }
 
 // ---------------------------------------------------------- Bildpuffer
@@ -4917,6 +4948,7 @@ var elBox=document.getElementById('box'), elBoxSrc=document.getElementById('bxsr
 var elCnt=document.getElementById('cnt'), elGoal=document.getElementById('goal'),
     elAkteN=document.getElementById('akten');
 var elDread=document.getElementById('dread'), elFlash=document.getElementById('flash');
+var dreadStand=-1, promptStand=null;      // letzter geschriebener DOM-Stand
 var elPrompt=document.getElementById('prompt'), elEcho=document.getElementById('echo');
 
 function showEcho(txt){
@@ -5470,7 +5502,7 @@ function gefasstTick(dt){
   var diff=((want-P.yaw+Math.PI*3)%TAU)-Math.PI;
   P.yaw+=diff*Math.min(1,dt*9);
   P.pitch=lerp(P.pitch, Math.atan2(MOTH.y-P.y, Math.max(0.4,md)), Math.min(1,dt*9));
-  G.dread=1; elDread.style.opacity='0.95';
+  G.dread=1; elDread.style.opacity='0.95'; dreadStand=-1;
   if(t>0.85 && !SURV.schwarz){
     SURV.schwarz=true;
     elFlash.style.background='#04060a';
@@ -5489,7 +5521,7 @@ function gefasstTick(dt){
     renderZeiten('bz1', -1);
     document.getElementById('tot').classList.remove('hidden');
     elFlash.style.background='#fff'; elFlash.style.opacity='0';
-    G.dread=0; G.dreadTarget=0; elDread.style.opacity='0';
+    G.dread=0; G.dreadTarget=0; elDread.style.opacity='0'; dreadStand=-1;
     MOTH.active=false; SURV.lunge=0;
   }
 }
@@ -6262,7 +6294,19 @@ function applySave(s){
 /* -------------------------------------------------------------- Eingabe */
 function lockPointer(){
   if(!cv.requestPointerLock) return;
-  try{ var r=cv.requestPointerLock(); if(r&&r.catch) r.catch(function(){}); }catch(e){}
+  /* Rohe Mausdaten anfordern: ohne unadjustedMovement legt der Browser die
+     Zeigerbeschleunigung des Betriebssystems über die Deltas, und dieselbe
+     Handbewegung dreht mal weiter, mal kürzer — das fühlt sich an wie eine
+     stotternde Maus, obwohl kein Bild fehlt. Wo die Option unbekannt ist,
+     fällt der Aufruf auf das alte Verhalten zurück. */
+  try{
+    var r=cv.requestPointerLock({unadjustedMovement:true});
+    if(r&&r.catch) r.catch(function(){
+      try{ var r2=cv.requestPointerLock(); if(r2&&r2.catch) r2.catch(function(){}); }catch(e){}
+    });
+  }catch(e){
+    try{ var r3=cv.requestPointerLock(); if(r3&&r3.catch) r3.catch(function(){}); }catch(e2){}
+  }
 }
 
 /* --- Vollbild -------------------------------------------------------------
@@ -6329,6 +6373,14 @@ window.addEventListener('mousemove',function(e){
   if(document.pointerLockElement===cv){ dx=e.movementX||0; dy=e.movementY||0; }
   else if(dragging){ dx=e.clientX-lastX; dy=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; }
   else return;
+  /* Zeigersprünge verwerfen. Chrome liefert im Pointer Lock vereinzelt ein
+     Ereignis mit hunderten Pixeln auf einen Schlag — nach dem Fangen, nach
+     Alt-Tab, beim Vollbildwechsel. Ein echter Schwenk verteilt sich auf
+     viele kleine Deltas (auch mit schneller Maus selten über ~120 px je
+     Ereignis); alles darüber ist Müll und war als Rucken der Kamera zu
+     spüren. Verwerfen, nicht kappen: Ein gekappter Sprung dreht immer noch
+     in eine Richtung, die niemand befohlen hat. */
+  if(dx>220||dx<-220||dy>220||dy<-220) return;
   P.yaw+=dx*0.0022*sens;
   P.pitch=clamp(P.pitch-dy*0.0022*sens,-1.15,1.05);
 });
@@ -6964,6 +7016,7 @@ function frame(now){
   if(dt>0.05) dt=0.05;
   lastT=now; G.t+=dt; G.frame++;
   if(G.state==='load'){ return; }
+  grasArbeit(14);                 // eine Scheibe des laufenden Gras-Auftrags
   // Das Ziel gehört ins Spiel, nicht über die Menüs. Hier, weil es der eine
   // Ort ist, durch den jeder Zustandswechsel kommt — sonst bliebe der Punkt
   // beim Pausieren, in der Akte oder auf der Karte stehen.
@@ -7033,7 +7086,9 @@ function update(dt){
   P.y=lerp(P.y, gy+1.70+amp*Math.sin(P.bob)*0.042*clamp(speed/2.2,0,1), 1-Math.pow(0.0002,dt));
   P.torch=lerp(P.torch,P.torchTarget,1-Math.pow(0.001,dt));
 
-  if(Math.hypot(P.x-grassAt[0],P.z-grassAt[1])>7){ scatterGrass(P.x,P.z); cullInstances(P.x,P.z); }
+  if(!grasJob && Math.hypot(P.x-grassAt[0],P.z-grassAt[1])>7){
+    scatterGrass(P.x,P.z,true); cullInstances(P.x,P.z);
+  }
   if(G.blockMsg>0) G.blockMsg-=dt;
   if(G.listenCd>0) G.listenCd-=dt;
   if(G.watchCd>0) G.watchCd-=dt;
@@ -7134,9 +7189,13 @@ function update(dt){
     A.droneG.gain.value=(0.05+G.dread*0.12)*G.droneBoost;
     A.rainG.gain.value=0.085*G.rainAmt*G.squall;
   }
-  elDread.style.opacity=(G.dread*0.85).toFixed(3);
-  elPrompt.classList.toggle('on',
-    G.found<2 && P.walked>26 && P.walked<100 && !speech.active && !G.focus);
+  /* Nur schreiben, was sich geändert hat. Beide Zeilen liefen jedes Bild in
+     den DOM — jede löst Stilberechnung und Neuzeichnen der Overlay-Ebene
+     aus, sechzigmal die Sekunde für meist denselben Wert. */
+  var dNeu=+(G.dread*0.85).toFixed(3);
+  if(dNeu!==dreadStand){ dreadStand=dNeu; elDread.style.opacity=dNeu; }
+  var pNeu = G.found<2 && P.walked>26 && P.walked<100 && !speech.active && !G.focus;
+  if(pNeu!==promptStand){ promptStand=pNeu; elPrompt.classList.toggle('on',pNeu); }
 
   // Das Finale löst nicht mehr diese Stelle aus, sondern die letzte Wegmarke
   // der fünften Nacht (siehe CH.script). Der alte Auslöser hier feuerte
